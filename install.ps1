@@ -1,349 +1,293 @@
 #requires -Version 5.1
+
+# ============================================================
+# SmartPLS 4 Installer
+# PowerShell + Windows Forms
+# ============================================================
+
 $ErrorActionPreference = "Stop"
 
-# ==========================================
+# ============================================================
 # KONFIGURASI
-# ==========================================
+# ============================================================
+
 $DownloadURL = "https://github.com/mytoolsss/install/releases/latest/download/pls.zip"
-$InstallDir = "$env:ProgramFiles\SmartPLS 4"
-$WorkDir    = "$env:TEMP\SmartPLSInstaller"
-$ZipFile    = Join-Path $WorkDir "pls.zip"
 
-# Registry aplikasi
-$UninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
+$InstallDir = Join-Path $env:ProgramFiles "SmartPLS 4"
+$WorkDir    = Join-Path $env:TEMP "SmartPLSInstaller"
+$ZipFile   = Join-Path $WorkDir "pls.zip"
 
-# ==========================================
-# PERIKSA HAK ADMINISTRATOR
-# ==========================================
-$Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+$AppName   = "SmartPLS 4"
+$Publisher = "SmartPLS"
+$RegPath   = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
 
-if (-not $Principal.IsInRole(
-    [Security.Principal.WindowsBuiltInRole]::Administrator
-)) {
-    Write-Host "Jalankan PowerShell sebagai Administrator." -ForegroundColor Yellow
-    exit 1
+$DesktopShortcut = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "SmartPLS 4.lnk"
+
+# ============================================================
+# CEK ADMINISTRATOR
+# ============================================================
+
+$IsAdmin = ([Security.Principal.WindowsPrincipal] `
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $IsAdmin) {
+    Start-Process powershell.exe `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+        -Verb RunAs
+
+    exit
 }
 
-# ==========================================
-# FUNGSI: DETEKSI SMARTPLS 4 DARI REGISTRY
-# ==========================================
+# ============================================================
+# FUNGSI DETEKSI INSTALASI LAMA
+# ============================================================
+
 function Get-InstalledSmartPLS {
 
-    $RegistryPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    $UninstallPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
 
-    $InstalledApps = foreach ($Path in $RegistryPaths) {
+    foreach ($Path in $UninstallPaths) {
 
-        Get-ItemProperty `
-            -Path $Path `
-            -ErrorAction SilentlyContinue |
+        Get-ItemProperty $Path -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.DisplayName -match "^SmartPLS\s*4(\s|$)"
             }
     }
-
-    return @($InstalledApps)
 }
 
-# ==========================================
-# FUNGSI: UNINSTALL SMARTPLS LAMA
-# ==========================================
+# ============================================================
+# FUNGSI UNINSTALL VERSI LAMA
+# ============================================================
+
 function Uninstall-OldSmartPLS {
 
-    Write-Host "`n====================================" -ForegroundColor Cyan
-    Write-Host "PEMERIKSAAN SMARTPLS LAMA" -ForegroundColor Cyan
-    Write-Host "====================================" -ForegroundColor Cyan
+    $OldApps = @(Get-InstalledSmartPLS)
 
-    $InstalledApps = @(Get-InstalledSmartPLS)
+    foreach ($App in $OldApps) {
 
-    if ($InstalledApps.Count -eq 0) {
+        Write-Host "Menghapus instalasi lama: $($App.DisplayName)" `
+            -ForegroundColor Yellow
 
-        Write-Host "SmartPLS 4 tidak ditemukan di registry." -ForegroundColor Gray
-        Write-Host "Melanjutkan instalasi baru..." -ForegroundColor Green
-
-        return
-    }
-
-    foreach ($App in $InstalledApps) {
-
-        Write-Host "`nAplikasi ditemukan:" -ForegroundColor Yellow
-        Write-Host "Nama      : $($App.DisplayName)"
-        Write-Host "Versi     : $($App.DisplayVersion)"
-        Write-Host "Publisher  : $($App.Publisher)"
-        Write-Host "Lokasi    : $($App.InstallLocation)"
-
-        # Prioritaskan QuietUninstallString
         $UninstallString = $App.QuietUninstallString
 
         if ([string]::IsNullOrWhiteSpace($UninstallString)) {
             $UninstallString = $App.UninstallString
         }
 
-        if ([string]::IsNullOrWhiteSpace($UninstallString)) {
+        if ($App.PSChildName -match "^\{[A-Fa-f0-9-]+\}$") {
 
-            Write-Host "Uninstaller tidak tersedia." -ForegroundColor Yellow
-            continue
-        }
+            $ProductCode = $App.PSChildName
 
-        Write-Host "`nMenjalankan uninstall SmartPLS lama..." -ForegroundColor Cyan
-
-        # ==========================================
-        # MSI INSTALLER
-        # ==========================================
-        if ($UninstallString -match "msiexec") {
-
-            $ProductCode = [regex]::Match(
-                $UninstallString,
-                "\{[A-Fa-f0-9-]+\}"
-            ).Value
-
-            if (-not $ProductCode) {
-                throw "ProductCode MSI tidak ditemukan."
-            }
-
-            $Process = Start-Process `
-                -FilePath "msiexec.exe" `
-                -ArgumentList @(
-                    "/x"
-                    $ProductCode
-                    "/qn"
-                    "/norestart"
-                ) `
-                -Wait `
-                -PassThru
-        }
-        else {
-
-            # ==========================================
-            # EXE INSTALLER
-            # ==========================================
-            # Jalankan command uninstall dari registry.
-            # QuietUninstallString digunakan jika tersedia.
-
-            $Process = Start-Process `
-                -FilePath $env:ComSpec `
-                -ArgumentList @(
-                    "/d"
-                    "/s"
-                    "/c"
-                    "`"$UninstallString`""
-                ) `
-                -Wait `
-                -PassThru
-        }
-
-        # ==========================================
-        # PERIKSA HASIL UNINSTALL
-        # ==========================================
-        if ($Process.ExitCode -notin @(0, 1605, 3010)) {
-
-            throw "Uninstall gagal. Exit code: $($Process.ExitCode)"
+            Start-Process "msiexec.exe" `
+                -ArgumentList "/x $ProductCode /qn /norestart" `
+                -Wait
 
         }
+        elseif (-not [string]::IsNullOrWhiteSpace($UninstallString)) {
 
-        if ($Process.ExitCode -eq 3010) {
-
-            Write-Host "Uninstall selesai. Restart Windows mungkin diperlukan." -ForegroundColor Yellow
-
-        }
-        else {
-
-            Write-Host "Uninstall selesai." -ForegroundColor Green
-
+            Start-Process "cmd.exe" `
+                -ArgumentList "/d /s /c `"$UninstallString`"" `
+                -Wait
         }
     }
-
-    Write-Host "`nPemeriksaan instalasi lama selesai." -ForegroundColor Green
 }
 
-# ==========================================
-# PROSES INSTALASI
-# ==========================================
-try {
+# ============================================================
+# FUNGSI MEMBUAT UNINSTALLER GUI
+# ============================================================
 
-    # ==========================================
-    # 1. UNINSTALL SMARTPLS LAMA
-    # ==========================================
-    Uninstall-OldSmartPLS
-
-    # ==========================================
-    # 2. PERSIAPAN DOWNLOAD
-    # ==========================================
-    Write-Host "`n[1/5] Mengunduh SmartPLS..." -ForegroundColor Cyan
-
-    New-Item `
-        -ItemType Directory `
-        -Path $WorkDir `
-        -Force |
-        Out-Null
-
-    # Hapus ZIP lama
-    if (Test-Path $ZipFile) {
-        Remove-Item $ZipFile -Force
-    }
-
-    # Cari curl.exe
-    $Curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-
-    if (-not $Curl) {
-        throw "curl.exe tidak ditemukan di Windows."
-    }
-
-    # ==========================================
-    # 3. DOWNLOAD DENGAN PROGRESS BAR
-    # ==========================================
-    Write-Host "`nMengunduh file ZIP..." -ForegroundColor Yellow
-
-    $CurlArgs = @(
-        "-L"
-        "--fail"
-        "--show-error"
-        "--progress-bar"
-        "--retry", "5"
-        "--retry-delay", "2"
-        "--connect-timeout", "30"
-        "--output", $ZipFile
-        $DownloadURL
-    )
-
-    & $Curl.Source @CurlArgs
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Download gagal. Exit code: $LASTEXITCODE"
-    }
-
-    if (!(Test-Path $ZipFile) -or
-        (Get-Item $ZipFile).Length -eq 0) {
-        throw "File ZIP gagal diunduh atau kosong."
-    }
-
-    Write-Host "`nDownload berhasil!" -ForegroundColor Green
-
-    # ==========================================
-    # 4. PERIKSA FILE ZIP
-    # ==========================================
-    Write-Host "`n[2/5] Memeriksa file ZIP..." -ForegroundColor Cyan
-
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-
-    $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipFile)
-
-    try {
-
-        $EntryCount = $Archive.Entries.Count
-
-        if ($EntryCount -eq 0) {
-            throw "File ZIP kosong."
-        }
-
-        Write-Host "File ZIP valid. Total file: $EntryCount" -ForegroundColor Green
-
-    }
-    finally {
-
-        $Archive.Dispose()
-
-    }
-
-    # ==========================================
-    # 5. EKSTRAK PROGRAM
-    # ==========================================
-    Write-Host "`n[3/5] Mengekstrak SmartPLS..." -ForegroundColor Cyan
-
-    New-Item `
-        -ItemType Directory `
-        -Path $InstallDir `
-        -Force |
-        Out-Null
-
-    Expand-Archive `
-        -Path $ZipFile `
-        -DestinationPath $InstallDir `
-        -Force
-
-    # Cari smartpls.exe
-    $Exe = Get-ChildItem `
-        -Path $InstallDir `
-        -Filter "smartpls.exe" `
-        -File `
-        -Recurse |
-        Select-Object -First 1
-
-    if (!$Exe) {
-        throw "smartpls.exe tidak ditemukan. Periksa isi pls.zip."
-    }
-
-    Write-Host "Executable ditemukan: $($Exe.FullName)" -ForegroundColor Green
-
-    # ==========================================
-    # 6. BUAT SHORTCUT DESKTOP
-    # ==========================================
-    Write-Host "`n[4/5] Membuat shortcut Desktop..." -ForegroundColor Cyan
-
-    $Desktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
-
-    $Shell = New-Object -ComObject WScript.Shell
-
-    $ShortcutPath = "$Desktop\SmartPLS 4.lnk"
-
-    $Shortcut = $Shell.CreateShortcut($ShortcutPath)
-
-    $Shortcut.TargetPath = $Exe.FullName
-    $Shortcut.WorkingDirectory = $Exe.DirectoryName
-    $Shortcut.Arguments = ""
-
-    $Shortcut.Save()
-
-    # Aktifkan RunAs pada shortcut
-    $Bytes = [System.IO.File]::ReadAllBytes($ShortcutPath)
-
-    $Bytes[21] = $Bytes[21] -bor 0x20
-
-    [System.IO.File]::WriteAllBytes(
-        $ShortcutPath,
-        $Bytes
-    )
-
-    Write-Host "Shortcut berhasil dibuat." -ForegroundColor Green
-
-    # ==========================================
-    # 7. BUAT UNINSTALLER POWERSHELL
-    # ==========================================
-    Write-Host "`nMembuat uninstaller..." -ForegroundColor Cyan
+function Create-Uninstaller {
 
     $UninstallerPath = Join-Path $InstallDir "Uninstall-SmartPLS4.ps1"
 
     $UninstallerCode = @'
-$ErrorActionPreference = "Stop"
+#requires -Version 5.1
+
+$ErrorActionPreference = "SilentlyContinue"
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 $InstallDir = "$env:ProgramFiles\SmartPLS 4"
-$UninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
-$ShortcutPath = "$([Environment]::GetFolderPath('CommonDesktopDirectory'))\SmartPLS 4.lnk"
+$RegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
 
-# Tutup proses SmartPLS
-Get-Process -Name "smartpls" -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+$DesktopShortcut = Join-Path `
+    ([Environment]::GetFolderPath("CommonDesktopDirectory")) `
+    "SmartPLS 4.lnk"
 
-# Hapus shortcut
-if (Test-Path $ShortcutPath) {
-    Remove-Item $ShortcutPath -Force
-}
+# ------------------------------------------------------------
+# GUI
+# ------------------------------------------------------------
 
-# Hapus registry aplikasi
-if (Test-Path $UninstallKey) {
-    Remove-Item $UninstallKey -Recurse -Force
-}
+$form = New-Object System.Windows.Forms.Form
 
-# Hapus folder instalasi
-if (Test-Path $InstallDir) {
-    Remove-Item $InstallDir -Recurse -Force
-}
+$form.Text = "Uninstall SmartPLS 4"
+$form.Size = New-Object System.Drawing.Size(520, 285)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.BackColor = [System.Drawing.Color]::White
 
-Write-Host "SmartPLS 4 berhasil di-uninstall." -ForegroundColor Green
+$title = New-Object System.Windows.Forms.Label
+$title.Text = "Uninstall SmartPLS 4"
+$title.Font = New-Object System.Drawing.Font(
+    "Segoe UI", 16, [System.Drawing.FontStyle]::Bold
+)
+$title.Location = New-Object System.Drawing.Point(25, 20)
+$title.Size = New-Object System.Drawing.Size(450, 35)
+
+$description = New-Object System.Windows.Forms.Label
+$description.Text = "Aplikasi dan file SmartPLS 4 akan dihapus dari komputer."
+$description.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$description.Location = New-Object System.Drawing.Point(27, 65)
+$description.Size = New-Object System.Drawing.Size(450, 25)
+
+$status = New-Object System.Windows.Forms.Label
+$status.Text = "Siap menghapus SmartPLS 4."
+$status.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$status.Location = New-Object System.Drawing.Point(27, 115)
+$status.Size = New-Object System.Drawing.Size(450, 25)
+
+$progress = New-Object System.Windows.Forms.ProgressBar
+$progress.Location = New-Object System.Drawing.Point(27, 145)
+$progress.Size = New-Object System.Drawing.Size(450, 22)
+$progress.Minimum = 0
+$progress.Maximum = 100
+$progress.Value = 0
+$progress.Style = "Continuous"
+
+$button = New-Object System.Windows.Forms.Button
+$button.Text = "Uninstall"
+$button.Location = New-Object System.Drawing.Point(350, 190)
+$button.Size = New-Object System.Drawing.Size(125, 32)
+
+$form.Controls.AddRange(@(
+    $title,
+    $description,
+    $status,
+    $progress,
+    $button
+))
+
+# ------------------------------------------------------------
+# TIMER
+# ------------------------------------------------------------
+
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 100
+
+$script:Step = 0
+$script:Busy = $false
+
+$timer.Add_Tick({
+
+    $script:Step += 5
+
+    if ($script:Step -gt 100) {
+        $script:Step = 100
+    }
+
+    $progress.Value = $script:Step
+
+    switch ($script:Step) {
+
+        10 {
+            $status.Text = "Menutup SmartPLS 4..."
+            Get-Process -Name "smartpls" -ErrorAction SilentlyContinue |
+                Stop-Process -Force
+        }
+
+        30 {
+            $status.Text = "Menghapus shortcut..."
+            Remove-Item $DesktopShortcut -Force
+        }
+
+        50 {
+            $status.Text = "Membersihkan registry..."
+            Remove-Item $RegPath -Recurse -Force
+        }
+
+        70 {
+            $status.Text = "Menyiapkan penghapusan file..."
+        }
+
+        90 {
+            $status.Text = "Menyelesaikan proses uninstall..."
+        }
+    }
+
+    if ($script:Step -ge 100) {
+
+        $timer.Stop()
+
+        $status.Text = "SmartPLS 4 berhasil dihapus."
+        $button.Text = "Selesai"
+        $button.Enabled = $true
+
+        # Jalankan penghapusan folder setelah script ini keluar.
+        # Ini menghindari masalah menghapus file uninstaller yang
+        # sedang digunakan.
+        $cmd = 'cmd.exe /c timeout /t 2 /nobreak >nul & rmdir /s /q "{0}"' -f $InstallDir
+
+        Start-Process "cmd.exe" `
+            -ArgumentList "/c timeout /t 2 /nobreak >nul & rmdir /s /q `"$InstallDir`"" `
+            -WindowStyle Hidden
+
+        $script:Busy = $false
+    }
+})
+
+# ------------------------------------------------------------
+# TOMBOL
+# ------------------------------------------------------------
+
+$button.Add_Click({
+
+    if ($script:Step -ge 100) {
+        $form.Close()
+        return
+    }
+
+    if (-not $script:Busy) {
+
+        $confirm = [System.Windows.Forms.MessageBox]::Show(
+            "Apakah Anda yakin ingin menghapus SmartPLS 4?",
+            "Konfirmasi Uninstall",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+
+        if ($confirm -eq [System.Windows.Forms.DialogResult]::Yes) {
+
+            $script:Busy = $true
+            $button.Enabled = $false
+            $button.Text = "Menghapus..."
+
+            $timer.Start()
+        }
+    }
+})
+
+$form.Add_FormClosing({
+
+    if ($script:Busy -and $script:Step -lt 100) {
+
+        [System.Windows.Forms.MessageBox]::Show(
+            "Tunggu hingga proses uninstall selesai.",
+            "Uninstall SmartPLS 4"
+        )
+
+        $_.Cancel = $true
+    }
+})
+
+[void]$form.ShowDialog()
 '@
 
     Set-Content `
@@ -351,95 +295,241 @@ Write-Host "SmartPLS 4 berhasil di-uninstall." -ForegroundColor Green
         -Value $UninstallerCode `
         -Encoding UTF8
 
-    # ==========================================
-    # 8. REGISTRASI SMARTPLS KE WINDOWS
-    # ==========================================
-    Write-Host "`nMendaftarkan SmartPLS ke Installed apps..." -ForegroundColor Cyan
+    return $UninstallerPath
+}
 
-    New-Item -Path $UninstallKey -Force | Out-Null
+# ============================================================
+# PROSES INSTALLER
+# ============================================================
+
+try {
+
+    Write-Host ""
+    Write-Host "==========================================" `
+        -ForegroundColor Cyan
+
+    Write-Host "       SMARTPLS 4 INSTALLER" `
+        -ForegroundColor Cyan
+
+    Write-Host "==========================================" `
+        -ForegroundColor Cyan
+
+    # --------------------------------------------------------
+    # HAPUS VERSI LAMA
+    # --------------------------------------------------------
+
+    Uninstall-OldSmartPLS
+
+    # --------------------------------------------------------
+    # PERSIAPAN DOWNLOAD
+    # --------------------------------------------------------
+
+    if (-not (Test-Path $WorkDir)) {
+        New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+    }
+
+    if (Test-Path $ZipFile) {
+        Remove-Item $ZipFile -Force
+    }
+
+    # --------------------------------------------------------
+    # DOWNLOAD
+    # --------------------------------------------------------
+
+    Write-Host ""
+    Write-Host "Mengunduh SmartPLS 4..." -ForegroundColor Cyan
+
+    $CurlPath = Join-Path $env:SystemRoot "System32\curl.exe"
+
+    if (-not (Test-Path $CurlPath)) {
+        throw "curl.exe tidak ditemukan di Windows."
+    }
+
+    & $CurlPath `
+        -L `
+        --fail `
+        --show-error `
+        --progress-bar `
+        --retry 5 `
+        --retry-delay 2 `
+        --connect-timeout 30 `
+        --output $ZipFile `
+        $DownloadURL
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Download gagal. Periksa koneksi internet atau URL."
+    }
+
+    # --------------------------------------------------------
+    # VALIDASI ZIP
+    # --------------------------------------------------------
+
+    if (-not (Test-Path $ZipFile)) {
+        throw "File ZIP tidak ditemukan."
+    }
+
+    if ((Get-Item $ZipFile).Length -lt 1MB) {
+        throw "File ZIP terlalu kecil atau download tidak valid."
+    }
+
+    # --------------------------------------------------------
+    # EKSTRAK
+    # --------------------------------------------------------
+
+    Write-Host ""
+    Write-Host "Mengekstrak file SmartPLS 4..." `
+        -ForegroundColor Cyan
+
+    if (Test-Path $InstallDir) {
+        Remove-Item $InstallDir -Recurse -Force
+    }
+
+    New-Item -ItemType Directory -Path $InstallDir -Force |
+        Out-Null
+
+    Expand-Archive `
+        -Path $ZipFile `
+        -DestinationPath $InstallDir `
+        -Force
+
+    # --------------------------------------------------------
+    # CARI SMARTPLS.EXE
+    # --------------------------------------------------------
+
+    $Exe = Get-ChildItem `
+        -Path $InstallDir `
+        -Filter "smartpls.exe" `
+        -Recurse `
+        -File |
+        Select-Object -First 1
+
+    if (-not $Exe) {
+        throw "smartpls.exe tidak ditemukan setelah ekstraksi."
+    }
+
+    $ExePath = $Exe.FullName
+
+    # --------------------------------------------------------
+    # BUAT SHORTCUT DESKTOP
+    # --------------------------------------------------------
+
+    Write-Host "Membuat shortcut Desktop..." -ForegroundColor Cyan
+
+    $WshShell = New-Object -ComObject WScript.Shell
+
+    $Shortcut = $WshShell.CreateShortcut($DesktopShortcut)
+
+    $Shortcut.TargetPath = $ExePath
+    $Shortcut.WorkingDirectory = Split-Path $ExePath
+    $Shortcut.IconLocation = "$ExePath,0"
+    $Shortcut.Description = "SmartPLS 4"
+
+    $Shortcut.Save()
+
+    # --------------------------------------------------------
+    # BUAT UNINSTALLER GUI
+    # --------------------------------------------------------
+
+    Write-Host "Membuat uninstaller GUI..." -ForegroundColor Cyan
+
+    $UninstallerPath = Create-Uninstaller
+
+    # --------------------------------------------------------
+    # DAFTARKAN DI WINDOWS INSTALLED APPS
+    # --------------------------------------------------------
+
+    Write-Host "Mendaftarkan SmartPLS 4 di Windows..." `
+        -ForegroundColor Cyan
+
+    New-Item -Path $RegPath -Force | Out-Null
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "DisplayName" `
         -Value "SmartPLS 4"
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "DisplayVersion" `
         -Value "4"
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "Publisher" `
-        -Value "SmartPLS"
+        -Value $Publisher
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "InstallLocation" `
         -Value $InstallDir
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "DisplayIcon" `
-        -Value $Exe.FullName
+        -Value $ExePath
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "NoModify" `
         -Value 1 `
         -Type DWord
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "NoRepair" `
         -Value 1 `
         -Type DWord
 
-    # Perintah uninstall yang terdaftar di Windows
-    $UninstallCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$UninstallerPath`""
+    # Uninstall berjalan tersembunyi, tetapi GUI uninstaller tampil.
+    $UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UninstallerPath`""
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "UninstallString" `
-        -Value $UninstallCommand
+        -Value $UninstallString
 
     Set-ItemProperty `
-        -Path $UninstallKey `
+        -Path $RegPath `
         -Name "QuietUninstallString" `
-        -Value $UninstallCommand
+        -Value $UninstallString
 
-    Write-Host "SmartPLS berhasil didaftarkan ke Windows." -ForegroundColor Green
-
-    # ==========================================
-    # 9. JALANKAN SMARTPLS
-    # ==========================================
-    Write-Host "`n[5/5] Menjalankan SmartPLS..." -ForegroundColor Cyan
-
-    Start-Process `
-        -FilePath $Exe.FullName `
-        -WorkingDirectory $Exe.DirectoryName `
-        -Verb RunAs
-
-    # ==========================================
+    # --------------------------------------------------------
     # SELESAI
-    # ==========================================
-    Write-Host "`n====================================" -ForegroundColor Green
-    Write-Host "INSTALASI SELESAI" -ForegroundColor Green
-    Write-Host "====================================" -ForegroundColor Green
+    # --------------------------------------------------------
 
-    Write-Host "Lokasi      : $InstallDir"
-    Write-Host "Executable  : $($Exe.FullName)"
-    Write-Host "Shortcut    : Desktop\SmartPLS 4.lnk"
-    Write-Host "Uninstaller : $UninstallerPath"
-    Write-Host "Status      : SmartPLS dijalankan sebagai Administrator."
-    Write-Host "Installed apps: SmartPLS 4"
+    Write-Host ""
+    Write-Host "==========================================" `
+        -ForegroundColor Green
+
+    Write-Host "SmartPLS 4 berhasil diinstal!" `
+        -ForegroundColor Green
+
+    Write-Host "==========================================" `
+        -ForegroundColor Green
+
+    # --------------------------------------------------------
+    # JALANKAN SMARTPLS
+    # --------------------------------------------------------
+
+    Write-Host "Menjalankan SmartPLS 4..." `
+        -ForegroundColor Cyan
+
+    Start-Process -FilePath $ExePath
 
 }
 catch {
 
-    Write-Host "`nINSTALASI GAGAL" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "INSTALLER GAGAL:" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
 
     exit 1
+}
+finally {
 
+    # Bersihkan file download sementara.
+    if (Test-Path $WorkDir) {
+        Remove-Item $WorkDir -Recurse -Force `
+            -ErrorAction SilentlyContinue
+    }
 }
