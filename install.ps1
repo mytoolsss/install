@@ -9,6 +9,9 @@ $InstallDir = "$env:ProgramFiles\SmartPLS 4"
 $WorkDir    = "$env:TEMP\SmartPLSInstaller"
 $ZipFile    = Join-Path $WorkDir "pls.zip"
 
+# Registry aplikasi
+$UninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
+
 # ==========================================
 # PERIKSA HAK ADMINISTRATOR
 # ==========================================
@@ -73,7 +76,7 @@ function Uninstall-OldSmartPLS {
         Write-Host "Publisher  : $($App.Publisher)"
         Write-Host "Lokasi    : $($App.InstallLocation)"
 
-        # Prioritaskan uninstall command silent
+        # Prioritaskan QuietUninstallString
         $UninstallString = $App.QuietUninstallString
 
         if ([string]::IsNullOrWhiteSpace($UninstallString)) {
@@ -82,7 +85,7 @@ function Uninstall-OldSmartPLS {
 
         if ([string]::IsNullOrWhiteSpace($UninstallString)) {
 
-            Write-Host "Uninstaller tidak tersedia di registry." -ForegroundColor Yellow
+            Write-Host "Uninstaller tidak tersedia." -ForegroundColor Yellow
             continue
         }
 
@@ -118,9 +121,8 @@ function Uninstall-OldSmartPLS {
             # ==========================================
             # EXE INSTALLER
             # ==========================================
-            # Jalankan uninstall command dari registry.
-            # Jika QuietUninstallString tersedia,
-            # gunakan command tersebut terlebih dahulu.
+            # Jalankan command uninstall dari registry.
+            # QuietUninstallString digunakan jika tersedia.
 
             $Process = Start-Process `
                 -FilePath $env:ComSpec `
@@ -309,7 +311,107 @@ try {
     Write-Host "Shortcut berhasil dibuat." -ForegroundColor Green
 
     # ==========================================
-    # 7. JALANKAN SMARTPLS
+    # 7. BUAT UNINSTALLER POWERSHELL
+    # ==========================================
+    Write-Host "`nMembuat uninstaller..." -ForegroundColor Cyan
+
+    $UninstallerPath = Join-Path $InstallDir "Uninstall-SmartPLS4.ps1"
+
+    $UninstallerCode = @'
+$ErrorActionPreference = "Stop"
+
+$InstallDir = "$env:ProgramFiles\SmartPLS 4"
+$UninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
+$ShortcutPath = "$([Environment]::GetFolderPath('CommonDesktopDirectory'))\SmartPLS 4.lnk"
+
+# Tutup proses SmartPLS
+Get-Process -Name "smartpls" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+
+# Hapus shortcut
+if (Test-Path $ShortcutPath) {
+    Remove-Item $ShortcutPath -Force
+}
+
+# Hapus registry aplikasi
+if (Test-Path $UninstallKey) {
+    Remove-Item $UninstallKey -Recurse -Force
+}
+
+# Hapus folder instalasi
+if (Test-Path $InstallDir) {
+    Remove-Item $InstallDir -Recurse -Force
+}
+
+Write-Host "SmartPLS 4 berhasil di-uninstall." -ForegroundColor Green
+'@
+
+    Set-Content `
+        -Path $UninstallerPath `
+        -Value $UninstallerCode `
+        -Encoding UTF8
+
+    # ==========================================
+    # 8. REGISTRASI SMARTPLS KE WINDOWS
+    # ==========================================
+    Write-Host "`nMendaftarkan SmartPLS ke Installed apps..." -ForegroundColor Cyan
+
+    New-Item -Path $UninstallKey -Force | Out-Null
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "DisplayName" `
+        -Value "SmartPLS 4"
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "DisplayVersion" `
+        -Value "4"
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "Publisher" `
+        -Value "SmartPLS"
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "InstallLocation" `
+        -Value $InstallDir
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "DisplayIcon" `
+        -Value $Exe.FullName
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "NoModify" `
+        -Value 1 `
+        -Type DWord
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "NoRepair" `
+        -Value 1 `
+        -Type DWord
+
+    # Perintah uninstall yang terdaftar di Windows
+    $UninstallCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$UninstallerPath`""
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "UninstallString" `
+        -Value $UninstallCommand
+
+    Set-ItemProperty `
+        -Path $UninstallKey `
+        -Name "QuietUninstallString" `
+        -Value $UninstallCommand
+
+    Write-Host "SmartPLS berhasil didaftarkan ke Windows." -ForegroundColor Green
+
+    # ==========================================
+    # 9. JALANKAN SMARTPLS
     # ==========================================
     Write-Host "`n[5/5] Menjalankan SmartPLS..." -ForegroundColor Cyan
 
@@ -328,7 +430,9 @@ try {
     Write-Host "Lokasi      : $InstallDir"
     Write-Host "Executable  : $($Exe.FullName)"
     Write-Host "Shortcut    : Desktop\SmartPLS 4.lnk"
+    Write-Host "Uninstaller : $UninstallerPath"
     Write-Host "Status      : SmartPLS dijalankan sebagai Administrator."
+    Write-Host "Installed apps: SmartPLS 4"
 
 }
 catch {
