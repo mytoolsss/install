@@ -23,7 +23,7 @@ if (-not $Principal.IsInRole(
 }
 
 # ==========================================
-# FUNGSI: CARI SMARTPLS YANG TERINSTAL
+# FUNGSI: DETEKSI SMARTPLS 4 DARI REGISTRY
 # ==========================================
 function Get-InstalledSmartPLS {
 
@@ -35,13 +35,15 @@ function Get-InstalledSmartPLS {
 
     $InstalledApps = foreach ($Path in $RegistryPaths) {
 
-        Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue |
+        Get-ItemProperty `
+            -Path $Path `
+            -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.DisplayName -match "^SmartPLS\s*4(\s|$)"
             }
     }
 
-    return $InstalledApps
+    return @($InstalledApps)
 }
 
 # ==========================================
@@ -49,158 +51,108 @@ function Get-InstalledSmartPLS {
 # ==========================================
 function Uninstall-OldSmartPLS {
 
-    Write-Host "`nMemeriksa instalasi SmartPLS 4 sebelumnya..." -ForegroundColor Cyan
+    Write-Host "`n====================================" -ForegroundColor Cyan
+    Write-Host "PEMERIKSAAN SMARTPLS LAMA" -ForegroundColor Cyan
+    Write-Host "====================================" -ForegroundColor Cyan
 
     $InstalledApps = @(Get-InstalledSmartPLS)
 
-    # Deteksi instalasi dari registry
-    if ($InstalledApps.Count -gt 0) {
-
-        foreach ($App in $InstalledApps) {
-
-            Write-Host "`nAplikasi ditemukan:" -ForegroundColor Yellow
-            Write-Host "Nama       : $($App.DisplayName)"
-            Write-Host "Versi      : $($App.DisplayVersion)"
-            Write-Host "Publisher   : $($App.Publisher)"
-
-            # Gunakan perintah uninstall dari registry
-            $UninstallString = $App.QuietUninstallString
-
-            if ([string]::IsNullOrWhiteSpace($UninstallString)) {
-                $UninstallString = $App.UninstallString
-            }
-
-            if (![string]::IsNullOrWhiteSpace($UninstallString)) {
-
-                Write-Host "`nMenjalankan uninstall SmartPLS lama..." -ForegroundColor Cyan
-
-                # Deteksi Windows Installer MSI
-                if ($UninstallString -match "msiexec") {
-
-                    $ProductCode = [regex]::Match(
-                        $UninstallString,
-                        "\{[A-Fa-f0-9-]+\}"
-                    ).Value
-
-                    if ($ProductCode) {
-
-                        $Process = Start-Process `
-                            -FilePath "msiexec.exe" `
-                            -ArgumentList @(
-                                "/x"
-                                $ProductCode
-                                "/qn"
-                                "/norestart"
-                            ) `
-                            -Wait `
-                            -PassThru
-
-                    }
-                    else {
-
-                        # Jalankan uninstall MSI sesuai registry
-                        $Process = Start-Process `
-                            -FilePath "cmd.exe" `
-                            -ArgumentList @(
-                                "/c"
-                                $UninstallString
-                            ) `
-                            -Wait `
-                            -PassThru
-                    }
-
-                }
-                else {
-
-                    # Uninstaller EXE
-                    # Gunakan QuietUninstallString jika tersedia
-                    $UninstallExe = $null
-                    $UninstallArgs = ""
-
-                    if ($UninstallString -match '^\s*"([^"]+)"\s*(.*)$') {
-
-                        $UninstallExe = $Matches[1]
-                        $UninstallArgs = $Matches[2]
-
-                    }
-                    else {
-
-                        $FirstSpace = $UninstallString.IndexOf(" ")
-
-                        if ($FirstSpace -gt 0) {
-
-                            $UninstallExe = $UninstallString.Substring(
-                                0,
-                                $FirstSpace
-                            )
-
-                            $UninstallArgs = $UninstallString.Substring(
-                                $FirstSpace + 1
-                            )
-
-                        }
-                        else {
-
-                            $UninstallExe = $UninstallString
-
-                        }
-                    }
-
-                    if (Test-Path $UninstallExe) {
-
-                        $Process = Start-Process `
-                            -FilePath $UninstallExe `
-                            -ArgumentList $UninstallArgs `
-                            -Wait `
-                            -PassThru
-
-                    }
-                    else {
-
-                        Write-Host "Uninstaller tidak ditemukan." -ForegroundColor Yellow
-
-                    }
-                }
-
-                if ($Process -and $Process.ExitCode -ne 0) {
-                    throw "Uninstall gagal. Exit code: $($Process.ExitCode)"
-                }
-
-                Write-Host "Uninstall selesai." -ForegroundColor Green
-
-            }
-            else {
-
-                Write-Host "Tidak ditemukan perintah uninstall di registry." -ForegroundColor Yellow
-
-            }
-        }
-    }
-    else {
+    if ($InstalledApps.Count -eq 0) {
 
         Write-Host "SmartPLS 4 tidak ditemukan di registry." -ForegroundColor Gray
+        Write-Host "Melanjutkan instalasi baru..." -ForegroundColor Green
 
+        return
     }
 
-    # ==========================================
-    # DETEKSI FOLDER INSTALASI LAMA
-    # ==========================================
-    if (Test-Path $InstallDir) {
+    foreach ($App in $InstalledApps) {
 
-        Write-Host "`nMenghapus folder instalasi lama..." -ForegroundColor Cyan
+        Write-Host "`nAplikasi ditemukan:" -ForegroundColor Yellow
+        Write-Host "Nama      : $($App.DisplayName)"
+        Write-Host "Versi     : $($App.DisplayVersion)"
+        Write-Host "Publisher  : $($App.Publisher)"
+        Write-Host "Lokasi    : $($App.InstallLocation)"
 
-        # Tutup proses SmartPLS jika sedang berjalan
-        Get-Process -Name "smartpls" -ErrorAction SilentlyContinue |
-            Stop-Process -Force -ErrorAction SilentlyContinue
+        # Prioritaskan uninstall command silent
+        $UninstallString = $App.QuietUninstallString
 
-        # Hapus folder instalasi
-        Remove-Item `
-            -Path $InstallDir `
-            -Recurse `
-            -Force
+        if ([string]::IsNullOrWhiteSpace($UninstallString)) {
+            $UninstallString = $App.UninstallString
+        }
 
-        Write-Host "Folder instalasi lama berhasil dihapus." -ForegroundColor Green
+        if ([string]::IsNullOrWhiteSpace($UninstallString)) {
 
+            Write-Host "Uninstaller tidak tersedia di registry." -ForegroundColor Yellow
+            continue
+        }
+
+        Write-Host "`nMenjalankan uninstall SmartPLS lama..." -ForegroundColor Cyan
+
+        # ==========================================
+        # MSI INSTALLER
+        # ==========================================
+        if ($UninstallString -match "msiexec") {
+
+            $ProductCode = [regex]::Match(
+                $UninstallString,
+                "\{[A-Fa-f0-9-]+\}"
+            ).Value
+
+            if (-not $ProductCode) {
+                throw "ProductCode MSI tidak ditemukan."
+            }
+
+            $Process = Start-Process `
+                -FilePath "msiexec.exe" `
+                -ArgumentList @(
+                    "/x"
+                    $ProductCode
+                    "/qn"
+                    "/norestart"
+                ) `
+                -Wait `
+                -PassThru
+        }
+        else {
+
+            # ==========================================
+            # EXE INSTALLER
+            # ==========================================
+            # Jalankan uninstall command dari registry.
+            # Jika QuietUninstallString tersedia,
+            # gunakan command tersebut terlebih dahulu.
+
+            $Process = Start-Process `
+                -FilePath $env:ComSpec `
+                -ArgumentList @(
+                    "/d"
+                    "/s"
+                    "/c"
+                    "`"$UninstallString`""
+                ) `
+                -Wait `
+                -PassThru
+        }
+
+        # ==========================================
+        # PERIKSA HASIL UNINSTALL
+        # ==========================================
+        if ($Process.ExitCode -notin @(0, 1605, 3010)) {
+
+            throw "Uninstall gagal. Exit code: $($Process.ExitCode)"
+
+        }
+
+        if ($Process.ExitCode -eq 3010) {
+
+            Write-Host "Uninstall selesai. Restart Windows mungkin diperlukan." -ForegroundColor Yellow
+
+        }
+        else {
+
+            Write-Host "Uninstall selesai." -ForegroundColor Green
+
+        }
     }
 
     Write-Host "`nPemeriksaan instalasi lama selesai." -ForegroundColor Green
@@ -214,10 +166,6 @@ try {
     # ==========================================
     # 1. UNINSTALL SMARTPLS LAMA
     # ==========================================
-    Write-Host "`n====================================" -ForegroundColor Cyan
-    Write-Host "PEMERIKSAAN SMARTPLS LAMA" -ForegroundColor Cyan
-    Write-Host "====================================" -ForegroundColor Cyan
-
     Uninstall-OldSmartPLS
 
     # ==========================================
@@ -233,18 +181,14 @@ try {
 
     # Hapus ZIP lama
     if (Test-Path $ZipFile) {
-
         Remove-Item $ZipFile -Force
-
     }
 
     # Cari curl.exe
     $Curl = Get-Command curl.exe -ErrorAction SilentlyContinue
 
     if (-not $Curl) {
-
         throw "curl.exe tidak ditemukan di Windows."
-
     }
 
     # ==========================================
@@ -267,16 +211,12 @@ try {
     & $Curl.Source @CurlArgs
 
     if ($LASTEXITCODE -ne 0) {
-
         throw "Download gagal. Exit code: $LASTEXITCODE"
-
     }
 
     if (!(Test-Path $ZipFile) -or
         (Get-Item $ZipFile).Length -eq 0) {
-
         throw "File ZIP gagal diunduh atau kosong."
-
     }
 
     Write-Host "`nDownload berhasil!" -ForegroundColor Green
@@ -295,9 +235,7 @@ try {
         $EntryCount = $Archive.Entries.Count
 
         if ($EntryCount -eq 0) {
-
             throw "File ZIP kosong."
-
         }
 
         Write-Host "File ZIP valid. Total file: $EntryCount" -ForegroundColor Green
@@ -334,9 +272,7 @@ try {
         Select-Object -First 1
 
     if (!$Exe) {
-
         throw "smartpls.exe tidak ditemukan. Periksa isi pls.zip."
-
     }
 
     Write-Host "Executable ditemukan: $($Exe.FullName)" -ForegroundColor Green
