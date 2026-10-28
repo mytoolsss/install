@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 # KONFIGURASI
 # ==========================================
 
-$DownloadURL = "https://github.com/influencekits/smart/releases/latest/download/pls.zip"
+$DownloadURL = "https://github.com/mytoolsss/install/releases/latest/download/pls.zip"
 
 $InstallDir = "$env:ProgramFiles\SmartPLS 4"
 $WorkDir = "$env:TEMP\SmartPLSInstaller"
