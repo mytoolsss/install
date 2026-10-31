@@ -1,4 +1,3 @@
-
 #requires -Version 5.1
 
 $ErrorActionPreference = "Stop"
@@ -74,8 +73,6 @@ function Uninstall-OldSmartPLS {
         Write-Host "Ditemukan instalasi lama:" -ForegroundColor Yellow
         Write-Host $App.DisplayName
 
-        # Jika instalasi lama memiliki uninstaller resmi,
-        # jalankan uninstaller tersebut.
         $UninstallString = $App.UninstallString
 
         if ($App.PSChildName -match "^\{[A-Fa-f0-9-]+\}$") {
@@ -237,7 +234,7 @@ try {
     Write-Host $UninstallerPath
 
     # --------------------------------------------------------
-    # BUAT SHORTCUT DESKTOP
+    # BUAT SHORTCUT DESKTOP (Tanpa paksa RunAs)
     # --------------------------------------------------------
 
     Write-Host ""
@@ -252,20 +249,7 @@ try {
     $Shortcut.IconLocation = "$ExePath,0"
     $Shortcut.Description = "SmartPLS 4"
 
-    # Aktifkan Run as administrator pada shortcut.
     $Shortcut.Save()
-
-    $ShortcutBytes = [System.IO.File]::ReadAllBytes($DesktopShortcut)
-
-    if ($ShortcutBytes.Length -gt 21) {
-
-        $ShortcutBytes[21] = $ShortcutBytes[21] -bor 0x20
-
-        [System.IO.File]::WriteAllBytes(
-            $DesktopShortcut,
-            $ShortcutBytes
-        )
-    }
 
     # --------------------------------------------------------
     # DAFTARKAN DI WINDOWS INSTALLED APPS
@@ -313,12 +297,6 @@ try {
         -Value 1 `
         -Type DWord
 
-    # --------------------------------------------------------
-    # UNINSTALL STRING
-    # --------------------------------------------------------
-    # Mengarah ke uninstall.exe bawaan SmartPLS.
-    # Tidak menggunakan PowerShell GUI buatan sendiri.
-
     $UninstallString = "`"$UninstallerPath`""
 
     Set-ItemProperty `
@@ -342,6 +320,9 @@ try {
         -FilePath $ExePath `
         -Verb RunAs
 
+    # Menutup jendela PowerShell/CMD secara otomatis setelah sukses
+    exit 0
+
 }
 catch {
 
@@ -353,7 +334,6 @@ catch {
 }
 finally {
 
-    # Hapus file download sementara.
     if (Test-Path $WorkDir) {
 
         Remove-Item $WorkDir `
