@@ -18,6 +18,8 @@ $AppName   = "SmartPLS 4"
 $Publisher = "SmartPLS GmbH"
 $RegPath   = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\SmartPLS4"
 
+$LogFile = Join-Path $env:TEMP "SmartPLS4_Installer.log"
+
 $DesktopShortcut = Join-Path `
     ([Environment]::GetFolderPath("CommonDesktopDirectory")) `
     "SmartPLS 4.lnk"
@@ -239,6 +241,7 @@ function Uninstall-AllOldSmartPLS {
 # ============================================================
 
 try {
+    Start-Transcript -Path $LogFile -Append -ErrorAction SilentlyContinue | Out-Null
     Write-Host ""
     Write-Host "==========================================" -ForegroundColor Cyan
     Write-Host "          SMARTPLS 4 INSTALLER" -ForegroundColor Cyan
@@ -359,8 +362,9 @@ try {
     Write-Host ""
     Write-Host "Menjalankan SmartPLS 4..." -ForegroundColor Cyan
     Start-Process -FilePath $ExePath
-
-    exit 0
+    Write-Host ""
+    Write-Host "Log tersimpan di: $LogFile" -ForegroundColor Cyan
+    Read-Host "Tekan ENTER untuk menutup jendela ini"
 }
 catch {
     Write-Host ""
@@ -368,10 +372,13 @@ catch {
     Write-Host "             INSTALLER GAGAL" -ForegroundColor Red
     Write-Host "==========================================" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
-    exit 1
+    Write-Host ""
+    Write-Host "Detail error tersimpan di: $LogFile" -ForegroundColor Yellow
+    Read-Host "Tekan ENTER untuk menutup jendela ini"
 }
 finally {
     if (Test-Path -LiteralPath $WorkDir) {
         Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
     }
+    try { Stop-Transcript | Out-Null } catch {}
 }
